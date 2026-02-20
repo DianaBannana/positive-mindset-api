@@ -58,6 +58,46 @@ class IngestStatusResponse(BaseModel):
     transcript_ready: bool
     summary_ready: bool
     created_at: str
+
+
+# ============================================
+# WhatsApp Integration Models (Twilio/Meta compatible)
+# ============================================
+
+class WhatsAppMediaPayload(BaseModel):
+    """
+    WhatsApp voice message payload.
+    Compatible with Twilio WhatsApp API and Meta Cloud API.
+    """
+    # Media details
+    media_url: str = Field(..., description="URL to download the voice message audio")
+    media_content_type: Optional[str] = Field("audio/ogg", description="MIME type (audio/ogg, audio/mp4)")
+    
+    # Sender info
+    sender_phone: str = Field(..., description="WhatsApp sender phone (E.164 format: +972501234567)")
+    sender_name: Optional[str] = Field(None, description="Sender's WhatsApp profile name")
+    
+    # Message metadata
+    message_id: Optional[str] = Field(None, description="WhatsApp message ID for deduplication")
+    timestamp: Optional[str] = Field(None, description="ISO 8601 timestamp of the message")
+    
+    # Optional context
+    account_sid: Optional[str] = Field(None, description="Twilio Account SID (for verification)")
+    conversation_id: Optional[str] = Field(None, description="Conversation/thread ID")
+    
+    # SalesEcho specific
+    rep_phone: Optional[str] = Field(None, description="Sales rep's WhatsApp number (to identify rep)")
+    callback_url: Optional[str] = Field(None, description="URL to POST results when complete")
+
+
+class WhatsAppIngestResponse(BaseModel):
+    """Response for WhatsApp voice message ingestion."""
+    success: bool
+    meeting_id: str
+    status: str
+    message: str
+    sender_phone: str
+    processing_started: bool
     completed_at: Optional[str] = None
 
 
@@ -575,6 +615,247 @@ async def get_ingest_status(
     except Exception as e:
         logger.error(f"[Webhook] Status check error: {e}")
         raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+
+
+# ============================================
+# WhatsApp Voice Message Endpoint
+# ============================================
+
+@router.post("/ingest/whatsapp", response_model=WhatsAppIngestResponse)
+async def ingest_whatsapp_voice(
+    background_tasks: BackgroundTasks,
+    payload: WhatsAppMediaPayload,
+    x_api_key: str = Header(..., alias="X-API-Key", description="API key for authentication"),
+    org_id: str = Header(..., alias="X-Org-ID", description="Organization ID"),
+):
+    """
+    Webhook endpoint for WhatsApp voice message ingestion.
+    
+    Compatible with:
+    - Twilio WhatsApp API (via webhook)
+    - Meta Cloud API (via webhook)
+    - Custom WhatsApp Business integrations
+    
+    Flow:
+    1. Receives voice message metadata from WhatsApp provider
+    2. Downloads audio from media_url
+    3. Resolves client from sender_phone
+    4. Processes through AI pipeline (transcription → summary → actions)
+    5. Optionally calls callback_url with results
+    
+    Authentication:
+    - Requires X-API-Key header with valid API key
+    - Requires X-Org-ID header with organization ID
+    
+    Example Twilio-style payload:
+    ```json
+    {
+        "media_url": "https://api.twilio.com/2010-04-01/.../Media/...",
+        "media_content_type": "audio/ogg",
+        "sender_phone": "+972501234567",
+        "sender_name": "John Doe",
+        "message_id": "SM1234...",
+        "timestamp": "2026-02-20T10:30:00Z",
+        "account_sid": "AC..."
+    }
+    ```
+    
+    Example Meta-style payload:
+    ```json
+    {
+        "media_url": "https://lookaside.fbsbx.com/...",
+        "media_content_type": "audio/ogg; codecs=opus",
+        "sender_phone": "+972501234567",
+        "message_id": "wamid.XXX",
+        "timestamp": "1708425000"
+    }
+    ```
+    """
+    # Validate API key
+    is_valid = await validate_api_key_simple(x_api_key, org_id)
+    if not is_valid:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    
+    # Check usage quota
+    await check_can_process(org_id, is_simulation=False)
+    
+    # Deduplicate by message_id
+    if payload.message_id:
+        prisma = get_prisma()
+        existing = await prisma.meeting.find_first(
+            where={
+                "org_id": org_id,
+                "metadata": {"path": ["whatsapp_message_id"], "equals": payload.message_id}
+            }
+        )
+        if existing:
+            logger.info(f"[WhatsApp] Duplicate message {payload.message_id}, returning existing meeting")
+            return WhatsAppIngestResponse(
+                success=True,
+                meeting_id=existing.id,
+                status=existing.status,
+                message="Message already processed",
+                sender_phone=payload.sender_phone,
+                processing_started=False,
+            )
+    
+    # Normalize phone number
+    normalized_phone = normalize_phone(payload.sender_phone)
+    
+    try:
+        prisma = get_prisma()
+        
+        # Generate meeting ID
+        meeting_id = str(uuid.uuid4())
+        
+        # Determine rep user (from rep_phone or default)
+        rep_user_id = None
+        if payload.rep_phone:
+            rep_user = await prisma.user.find_first(
+                where={"org_id": org_id, "email": {"contains": payload.rep_phone}}
+            )
+            if rep_user:
+                rep_user_id = rep_user.id
+        
+        if not rep_user_id:
+            # Use first user in org as default
+            default_user = await prisma.user.find_first(where={"org_id": org_id})
+            rep_user_id = default_user.id if default_user else settings.dev_org_id or "whatsapp-ingest"
+        
+        # Build metadata
+        whatsapp_metadata = {
+            "source": "whatsapp",
+            "whatsapp_message_id": payload.message_id,
+            "conversation_id": payload.conversation_id,
+            "content_type": payload.media_content_type,
+            "timestamp": payload.timestamp,
+            "account_sid": payload.account_sid,
+        }
+        
+        # Create meeting record
+        meeting = await prisma.meeting.create(
+            data={
+                "id": meeting_id,
+                "org_id": org_id,
+                "user_id": rep_user_id,
+                "client_name": payload.sender_name or f"WhatsApp: {normalized_phone}",
+                "source_phone": normalized_phone,
+                "status": "PENDING",
+                "metadata": whatsapp_metadata,
+            }
+        )
+        
+        logger.info(f"[WhatsApp] Created meeting {meeting_id} for sender {normalized_phone}")
+        
+        # Start background processing
+        background_tasks.add_task(
+            process_whatsapp_voice,
+            meeting_id=meeting_id,
+            media_url=payload.media_url,
+            org_id=org_id,
+            user_id=rep_user_id,
+            client_phone=normalized_phone,
+            client_name=payload.sender_name,
+            callback_url=payload.callback_url,
+            metadata=whatsapp_metadata,
+        )
+        
+        return WhatsAppIngestResponse(
+            success=True,
+            meeting_id=meeting_id,
+            status="PENDING",
+            message="WhatsApp voice message received. Processing started.",
+            sender_phone=normalized_phone,
+            processing_started=True,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[WhatsApp] Ingestion error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"WhatsApp ingestion failed: {str(e)}")
+
+
+async def process_whatsapp_voice(
+    meeting_id: str,
+    media_url: str,
+    org_id: str,
+    user_id: str,
+    client_phone: Optional[str] = None,
+    client_name: Optional[str] = None,
+    callback_url: Optional[str] = None,
+    metadata: Optional[dict] = None,
+):
+    """
+    Background task to process a WhatsApp voice message.
+    
+    Reuses the main inbound recording pipeline with WhatsApp-specific handling.
+    """
+    logger.info(f"[WhatsApp Pipeline] Starting processing for meeting {meeting_id}")
+    
+    try:
+        # Download audio from WhatsApp media URL
+        audio_path = None
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # WhatsApp media URLs may require authentication header for some providers
+            headers = {}
+            if metadata and metadata.get("account_sid"):
+                # Twilio-style: may need auth (handled by URL token usually)
+                pass
+            
+            response = await client.get(media_url, headers=headers, follow_redirects=True)
+            response.raise_for_status()
+            
+            # Determine file extension from content type
+            content_type = response.headers.get("content-type", "audio/ogg")
+            if "ogg" in content_type:
+                ext = ".ogg"
+            elif "mp4" in content_type or "m4a" in content_type:
+                ext = ".m4a"
+            elif "mp3" in content_type:
+                ext = ".mp3"
+            else:
+                ext = ".ogg"  # Default for WhatsApp
+            
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as f:
+                f.write(response.content)
+                audio_path = f.name
+        
+        logger.info(f"[WhatsApp Pipeline] Downloaded audio to {audio_path}")
+        
+        # Reuse main processing pipeline
+        await process_inbound_recording(
+            meeting_id=meeting_id,
+            audio_path=audio_path,
+            org_id=org_id,
+            user_id=user_id,
+            client_phone=client_phone,
+            client_name=client_name,
+            callback_url=callback_url,
+            metadata=metadata,
+            is_simulation=False,
+        )
+        
+    except Exception as e:
+        logger.error(f"[WhatsApp Pipeline] Error: {e}", exc_info=True)
+        
+        # Update meeting with error
+        prisma = get_prisma()
+        await prisma.meeting.update(
+            where={"id": meeting_id},
+            data={
+                "status": "FAILED",
+                "processing_errors": [{"error": str(e), "stage": "whatsapp_download"}],
+            }
+        )
+    finally:
+        # Cleanup temp file
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.unlink(audio_path)
+            except Exception:
+                pass
 
 
 @router.post("/ingest/simulate")
