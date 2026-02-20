@@ -1,14 +1,16 @@
 # Login Fix - Supabase Configuration
 
-## ✅ Fixed: .env.local File Created
+## ✅ Fixed: .env.local File Required
 
-The `.env.local` file has been created with the correct Supabase credentials:
+The `.env.local` file must be created with your Supabase credentials:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://cerkjbxlqulnttyyvrtp.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNlcmtqYnhscXVsbnR0eXl2cnRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NzI5NzAsImV4cCI6MjA4NjA0ODk3MH0.Uqg_qjiRDPfUsT1gX-hRbCG9ZrnDtZ217gQaTIMv3qw
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
 NEXT_PUBLIC_API_URL=http://localhost:8000
 ```
+
+> **Security Note**: Get these values from your Supabase dashboard. Never commit actual credentials to the repository.
 
 ## 🔄 Next Steps
 
@@ -32,9 +34,7 @@ npm run dev
    [Login Page] NEXT_PUBLIC_SUPABASE_URL: ✅ DEFINED
    [Login Page] NEXT_PUBLIC_SUPABASE_ANON_KEY: ✅ DEFINED
    ```
-4. Enter credentials:
-   - Email: `testadmin@test.com`
-   - Password: (your password)
+4. Enter your credentials
 5. Click "Sign In"
 
 ### 3. Expected Behavior
@@ -61,8 +61,8 @@ cat .env.local
 ```
 
 Should show:
-- `NEXT_PUBLIC_SUPABASE_URL=https://cerkjbxlqulnttyyvrtp.supabase.co`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...` (long JWT token)
+- `NEXT_PUBLIC_SUPABASE_URL=https://<project>.supabase.co`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon-key>`
 - `NEXT_PUBLIC_API_URL=http://localhost:8000`
 
 ### Common Issues
@@ -75,7 +75,6 @@ Should show:
 
 2. **"Invalid credentials"**
    - Verify user exists in Supabase dashboard
-   - Check email: `testadmin@test.com`
    - Reset password in Supabase if needed
 
 3. **"Network error"**
@@ -83,16 +82,15 @@ Should show:
    - Verify internet connection
    - Check Supabase dashboard is accessible
 
-## 📝 Test Credentials
+## 📝 Getting Credentials
 
-- **Email**: `testadmin@test.com`
-- **Password**: (the password you set in Supabase)
-
-If you need to reset the password:
-1. Go to Supabase Dashboard → Authentication → Users
-2. Find `testadmin@test.com`
-3. Click "Reset Password" or set a new password
+1. Go to [Supabase Dashboard](https://app.supabase.com)
+2. Select your project
+3. Go to Settings → API
+4. Copy:
+   - **Project URL** → `NEXT_PUBLIC_SUPABASE_URL`
+   - **anon/public key** → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
 ---
 
-**Last Updated**: 2026-02-12
+**Last Updated**: 2026-02-20

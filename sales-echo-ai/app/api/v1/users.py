@@ -197,6 +197,8 @@ async def get_team_members(
 ):
     """
     Get all team members for organization (Manager+ only).
+    
+    Optimized: Uses batch query for meeting counts instead of N+1.
     """
     if settings.dev_org_id and (not org_id or org_id == "default-org-id"):
         org_id = settings.dev_org_id
@@ -204,28 +206,31 @@ async def get_team_members(
     prisma = get_prisma()
     
     try:
+        # Single query to get users with their meeting counts (optimized)
         users = await prisma.user.find_many(
             where={"org_id": org_id},
             order_by={"name": "asc"},
+            include={
+                "_count": {
+                    "select": {"meetings": True}
+                }
+            }
         )
         
-        # Get meeting counts per user
-        result = []
-        for user in users:
-            meeting_count = await prisma.meeting.count(
-                where={"user_id": user.id, "org_id": org_id}
-            )
-            
-            result.append({
+        # Build result from pre-fetched data (no N+1)
+        result = [
+            {
                 "id": user.id,
                 "name": user.name,
                 "email": user.email,
                 "role": user.role,
                 "avatar_url": user.avatar_url,
-                "meeting_count": meeting_count,
+                "meeting_count": user._count.meetings if hasattr(user, '_count') else 0,
                 "last_active": user.last_active_at.isoformat() if user.last_active_at else None,
                 "created_at": user.created_at.isoformat(),
-            })
+            }
+            for user in users
+        ]
         
         return {
             "team": result,
@@ -246,6 +251,8 @@ async def get_team_stats(
     Get team performance statistics (Manager+ only).
     
     Returns activity volume, performance metrics per rep.
+    
+    Optimized: Single query for all meetings, processed in-memory per user.
     """
     if settings.dev_org_id and (not org_id or org_id == "default-org-id"):
         org_id = settings.dev_org_id
@@ -253,36 +260,42 @@ async def get_team_stats(
     prisma = get_prisma()
     
     from datetime import datetime, timedelta
+    from collections import defaultdict
+    
     start_date = datetime.utcnow() - timedelta(days=days)
     
     try:
-        # Get users
-        users = await prisma.user.find_many(
-            where={"org_id": org_id}
+        # Single query: Get all users and all meetings in period (no N+1)
+        users = await prisma.user.find_many(where={"org_id": org_id})
+        
+        all_meetings = await prisma.meeting.find_many(
+            where={
+                "org_id": org_id,
+                "created_at": {"gte": start_date},
+                "status": "COMPLETED",
+            }
         )
+        
+        # Group meetings by user_id in memory
+        meetings_by_user: Dict[str, list] = defaultdict(list)
+        for meeting in all_meetings:
+            meetings_by_user[meeting.user_id].append(meeting)
         
         team_stats = []
         
         for user in users:
-            # Get meetings for this user
-            meetings = await prisma.meeting.find_many(
-                where={
-                    "user_id": user.id,
-                    "org_id": org_id,
-                    "created_at": {"gte": start_date},
-                    "status": "COMPLETED",
-                }
-            )
+            # Get this user's meetings from the pre-fetched dict
+            user_meetings = meetings_by_user.get(user.id, [])
             
-            total_meetings = len(meetings)
-            total_minutes = sum(m.duration_seconds or 0 for m in meetings) / 60
+            total_meetings = len(user_meetings)
+            total_minutes = sum(m.duration_seconds or 0 for m in user_meetings) / 60
             
-            # Calculate average sentiment
+            # Calculate metrics from meetings
             sentiments = []
             total_pipeline = 0.0
             hot_deals = 0
             
-            for meeting in meetings:
+            for meeting in user_meetings:
                 if meeting.summary and isinstance(meeting.summary, dict):
                     content = meeting.summary.get("content", {})
                     if isinstance(content, dict):

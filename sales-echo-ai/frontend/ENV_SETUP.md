@@ -7,8 +7,8 @@ Create a `.env.local` file in the `frontend/` directory with the following conte
 ```env
 # Supabase Configuration
 # Copy these values from your root .env file and prefix with NEXT_PUBLIC_
-NEXT_PUBLIC_SUPABASE_URL=https://cerkjbxlqulnttyyvrtp.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNlcmtqYnhscXVsbnR0eXl2cnRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NzI5NzAsImV4cCI6MjA4NjA0ODk3MH0.Uqg_qjiRDPfUsT1gX-hRbCG9ZrnDtZ217gQaTIMv3qw
+NEXT_PUBLIC_SUPABASE_URL=<your-supabase-project-url>
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-supabase-anon-key>
 
 # FastAPI Backend URL
 NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -26,10 +26,10 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
    touch .env.local
    ```
 
-3. **Add the following content** (replace placeholders with actual values):
+3. **Add the following content** (replace placeholders with actual values from your Supabase dashboard):
    ```env
-   NEXT_PUBLIC_SUPABASE_URL=https://cerkjbxlqulnttyyvrtp.supabase.co
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNlcmtqYnhscXVsbnR0eXl2cnRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA0NzI5NzAsImV4cCI6MjA4NjA0ODk3MH0.Uqg_qjiRDPfUsT1gX-hRbCG9ZrnDtZ217gQaTIMv3qw
+   NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key-from-supabase>
    NEXT_PUBLIC_API_URL=http://localhost:8000
    ```
 
