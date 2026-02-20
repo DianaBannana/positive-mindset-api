@@ -28,12 +28,106 @@ model Organization {
   // Relations
   users            User[]
   meetings         Meeting[]
+  clients          Client[]
   corrections      Correction[]
   crm_integrations CRMIntegration[]
   crm_audit_logs   CRMAuditLog[]
+  org_settings     OrganizationSettings?
+  api_keys         APIKey[]
+  feedback_logs    FeedbackLog[]
   
   @@index([slug]) // Fast lookup by slug (in addition to unique constraint)
   @@map("organizations")
+}
+
+// ============================================
+// ORGANIZATION SETTINGS (Dynamic Brain)
+// ============================================
+
+model OrganizationSettings {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @unique @db.Uuid
+  
+  // Custom AI Instructions (The "Brain")
+  custom_prompt_instructions String? @db.Text // Custom instructions injected into AI prompts
+  // Example: "Focus on technical objections", "Always extract budget timeline"
+  
+  // Enabled Modules (Feature Flags)
+  enabled_modules Json @default("{\"email\": true, \"whatsapp\": true, \"calendar\": true, \"crm\": true}")
+  // JSON structure: { "email": true, "whatsapp": true, "calendar": true, "crm": true }
+  
+  // Feature Bundle (Subscription Tier)
+  feature_bundle    String  @default("trial") @db.VarChar(50) // "trial", "starter", "pro", "enterprise"
+  bundle_features   Json    @default("{\"email\": true, \"whatsapp\": true, \"calendar\": false, \"crm\": false, \"api_access\": false, \"priority_support\": false}")
+  // Features available in this bundle
+  
+  // Trial & Usage Limits
+  trial_expires_at  DateTime? @db.Timestamptz(6) // NULL = no expiration (paid plans)
+  max_meetings      Int       @default(10) @db.Integer // Max meetings allowed in plan (0 = unlimited)
+  meetings_count    Int       @default(0) @db.Integer // Current usage count
+  max_minutes       Int       @default(60) @db.Integer // Max audio minutes per month (0 = unlimited)
+  minutes_used      Float     @default(0) @db.DoublePrecision // Current minutes used
+  
+  // Billing & Subscription
+  stripe_customer_id    String?  @db.VarChar(255) // Stripe customer ID for billing
+  stripe_subscription_id String? @db.VarChar(255) // Active subscription ID
+  billing_cycle_start   DateTime? @db.Timestamptz(6) // Current billing cycle start
+  
+  // Industry-Specific Settings
+  industry_type    String? @db.VarChar(100) // "saas", "real_estate", "consulting", etc.
+  default_language String  @default("he") @db.VarChar(10) // "he", "en", "he-en"
+  
+  // Action Dispatch Settings
+  auto_dispatch_actions Boolean @default(false) // Auto-execute detected actions
+  require_approval      Boolean @default(true)  // Require human approval before CRM sync
+  
+  // Webhook Settings
+  webhook_secret       String?  @db.VarChar(255) // For validating inbound webhooks
+  callback_url         String?  @db.Text         // URL to call after processing
+  
+  // Retention & Privacy
+  audio_retention_hours Int @default(24) @db.Integer // Hours to keep audio before deletion
+  
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  
+  @@map("organization_settings")
+}
+
+// ============================================
+// API KEYS (Webhook Authentication)
+// ============================================
+
+model APIKey {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @db.Uuid
+  
+  key_hash  String   @unique @db.VarChar(255) // SHA-256 hash of the actual key
+  key_prefix String  @db.VarChar(10) // First 8 chars for identification (e.g., "sk_live_")
+  name      String   @db.VarChar(255) // Friendly name (e.g., "PBX Integration Key")
+  
+  // Permissions
+  permissions Json   @default("[\"ingest\"]") // Array: ["ingest", "read", "admin"]
+  
+  // Usage Tracking
+  last_used_at DateTime? @db.Timestamptz(6)
+  usage_count  Int       @default(0) @db.Integer
+  
+  // Status
+  is_active    Boolean  @default(true)
+  expires_at   DateTime? @db.Timestamptz(6)
+  
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  
+  @@index([org_id])
+  @@index([key_hash])
+  @@map("api_keys")
 }
 
 model User {
@@ -43,7 +137,21 @@ model User {
   clerk_id  String?  @unique @db.VarChar(255) // Clerk user ID (alternative)
   email     String   @db.VarChar(255)
   name      String   @db.VarChar(255)
-  role      String   @default("sales_rep") @db.VarChar(50) // sales_rep, admin, manager
+  avatar_url String? @db.Text // Profile picture URL
+  
+  // Role-Based Access Control
+  role      String   @default("sales_rep") @db.VarChar(50) // sales_rep, manager, admin
+  // Permissions: JSON array of specific permissions beyond role defaults
+  // e.g., ["view_all_meetings", "export_data", "manage_team"]
+  permissions Json?   @default("[]")
+  
+  // Manager-specific fields
+  team_id   String?  @db.Uuid // Optional: For team grouping
+  reports_to String? @db.Uuid // Manager's user ID
+  
+  // Activity tracking
+  last_active_at DateTime? @db.Timestamptz(6)
+  
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @updatedAt @db.Timestamptz(6)
   
@@ -52,6 +160,7 @@ model User {
   meetings     Meeting[]
   corrections  Correction[]
   crm_audit_logs CRMAuditLog[]
+  feedback_logs FeedbackLog[]
   
   @@index([org_id])
   @@index([auth0_id])
@@ -59,12 +168,67 @@ model User {
   @@map("users")
 }
 
+// ============================================
+// CLIENT IDENTITY HUB (Shadow CRM)
+// ============================================
+
+model Client {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @db.Uuid
+  
+  // Core Identity
+  phone           String   @db.VarChar(50) // Primary identifier (normalized format)
+  email           String?  @db.VarChar(255)
+  full_name       String?  @db.VarChar(255)
+  company_name    String?  @db.VarChar(255)
+  
+  // External CRM Mapping
+  external_crm_id   String?  @db.VarChar(255) // ID in external CRM (HubSpot, Salesforce)
+  external_crm_type String?  @db.VarChar(50) // "hubspot", "salesforce", "pipedrive"
+  
+  // Relationship Intelligence
+  first_contact_at    DateTime?  @db.Timestamptz(6) // First meeting date
+  last_contact_at     DateTime?  @db.Timestamptz(6) // Most recent meeting
+  total_meetings      Int        @default(0) @db.Integer
+  total_talk_minutes  Float      @default(0) @db.DoublePrecision
+  
+  // Aggregated Sentiment (computed from meetings)
+  avg_sentiment_score Float?     @db.DoublePrecision // -1.0 to 1.0
+  relationship_stage  String     @default("new") @db.VarChar(50) // "new", "engaged", "nurturing", "closing", "won", "lost"
+  
+  // Flexible Metadata
+  metadata      Json?    // { "industry": "tech", "company_size": "50-200", "tags": ["enterprise", "pilot"] }
+  notes         String?  @db.Text // Free-form notes about the client
+  
+  // Status
+  is_active     Boolean  @default(true)
+  
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  meetings     Meeting[]
+  
+  // Unique constraint: phone per organization
+  @@unique([org_id, phone])
+  @@index([org_id])
+  @@index([phone])
+  @@index([email])
+  @@index([external_crm_id])
+  @@index([last_contact_at])
+  @@map("clients")
+}
+
 model Meeting {
   id          String   @id @default(uuid()) @db.Uuid
   org_id      String   @db.Uuid
   user_id     String   @db.Uuid // Sales rep who conducted the meeting
-  client_name String?  @db.VarChar(255) // Client/contact name
-  client_id   String?  @db.Uuid // Optional: link to CRM contact ID
+  client_name String?  @db.VarChar(255) // Client/contact name (legacy, use client relation)
+  client_id   String?  @db.Uuid // Link to Client record
+  
+  // Source Phone (for client resolution)
+  source_phone String?  @db.VarChar(50) // Phone from inbound call (used for client linking)
   
   // Audio & Transcript
   audio_url       String?  @db.Text // S3 or storage URL
@@ -108,14 +272,18 @@ model Meeting {
   // Relations
   organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  client       Client?      @relation(fields: [client_id], references: [id], onDelete: SetNull)
   corrections  Correction[]
   crm_audit_logs CRMAuditLog[]
+  feedback_logs FeedbackLog[]
   
   @@index([org_id])
   @@index([user_id])
+  @@index([client_id])
   @@index([status])
   @@index([created_at])
   @@index([org_id, client_id, created_at]) // For context retention: "last 3 meetings with client"
+  @@index([source_phone])
   @@map("meetings")
 }
 
@@ -186,6 +354,53 @@ model CRMIntegration {
   @@index([org_id])
   @@index([status])
   @@map("crm_integrations")
+}
+
+// ============================================
+// USER FEEDBACK LOOP (Learning Platform)
+// ============================================
+
+model FeedbackLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @db.Uuid
+  user_id   String?  @db.Uuid // User who provided feedback (nullable for system entries)
+  meeting_id String  @db.Uuid
+  
+  // Feedback Target
+  section_type  String   @db.VarChar(50) // "summary", "action_items", "deal_value", "next_meeting", "objection"
+  section_index Int?     @db.Integer // Index within array (e.g., action_items[2])
+  
+  // Rating
+  rating        String   @db.VarChar(20) // "positive", "negative", "neutral"
+  
+  // Original vs Corrected
+  original_value  Json?   // What the AI generated
+  corrected_value Json?   // User's correction (optional)
+  
+  // Metadata
+  feedback_type   String   @db.VarChar(50) // "accuracy", "missing", "hallucination", "incomplete", "wrong_language"
+  feedback_note   String?  @db.Text // Free-form user comment
+  
+  // AI Learning Context
+  confidence_at_generation Float? @db.DoublePrecision // Original confidence score
+  transcript_snippet       String? @db.Text // Relevant source text for context
+  
+  // For manager aggregation
+  category_tags  Json?    // ["technical_objection", "budget", "timeline"] - detected or manual
+  
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  meeting      Meeting      @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  
+  @@index([org_id])
+  @@index([meeting_id])
+  @@index([section_type])
+  @@index([rating])
+  @@index([created_at])
+  @@map("feedback_logs")
 }
 
 // ============================================

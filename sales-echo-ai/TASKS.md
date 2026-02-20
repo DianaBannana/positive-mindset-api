@@ -1,7 +1,7 @@
 # 🎯 SalesEcho AI - Task Master Board
 
-**Last Updated:** February 20, 2025  
-**Status:** POC Complete - Ready for Beta Planning
+**Last Updated:** February 20, 2026  
+**Status:** Enterprise POC Complete - Client Identity Hub Ready
 
 ---
 
@@ -61,6 +61,122 @@
 - [x] Add environment variables (DEV_ORG_ID, NEXT_PUBLIC_DEV_ORG_ID).
 - [x] Document Future Roadmap (Auth migration path).
 
+### Phase 8: Action Dispatcher & Back-office Suite ✓
+- [x] Create Action Dispatcher architecture (`app/core/dispatcher.py`).
+- [x] Implement modular action handlers (Email, Calendar, WhatsApp, CRM).
+- [x] Create Analytics API with org-level metrics.
+- [x] Build Command Center UI with sentiment gauge, deal heat, action items.
+- [x] Add "Simulate Inbound Call" feature for demo purposes.
+- [x] Document ingestion strategies (PBX, WhatsApp Bot, Meeting Bots).
+
+### Phase 9: Organization Admin & Approval Flow ✓
+- [x] Create OrganizationSettings Prisma model (custom brain, feature flags).
+- [x] Implement Admin Settings UI page (`/dashboard/settings`).
+- [x] Add module toggles (Email, WhatsApp, Calendar, CRM).
+- [x] Custom Brain Configuration (injectable prompt instructions).
+- [x] API Key management UI (generate, regenerate, obfuscate).
+- [x] Approval Flow for automated actions (approve/reject before send).
+- [x] Live Webhook Ingestion API (`POST /ingest/webhook`).
+
+### Phase 10: User Feedback Loop & Privacy ✓
+- [x] Create FeedbackLog Prisma model for user ratings.
+- [x] Implement FeedbackWidget component (thumbs up/down, corrections).
+- [x] Add Feedback API endpoints (`/feedback`, `/feedback/stats`).
+- [x] Create PII Redaction utility (`app/core/privacy.py`).
+- [x] Hebrew phone, email, credit card pattern detection.
+- [x] Manager's View in Analytics with AI recommendations.
+- [x] Consolidate shared TypeScript types in `lib/types.ts`.
+- [x] Create shared org ID management utility (`lib/org.ts`).
+
+### Phase 11: Client Identity Hub & Historical AI Context ✓
+- [x] Create Client Prisma model with phone-based identity.
+- [x] Establish Meeting → Client relationship.
+- [x] Implement client resolution service (`client_service.py`).
+- [x] Phone number normalization (Israeli + international).
+- [x] Historical context fetching (last 3 summaries per client).
+- [x] Inject `=== CLIENT HISTORY ===` block into AI prompts.
+- [x] Update ingestion pipeline for automatic client linking.
+- [x] Create Client Directory UI (`/dashboard/clients`).
+- [x] Create Client Timeline View (`/dashboard/clients/[id]`).
+- [x] Sentiment trend visualization.
+- [x] Relationship stage tracking (new → engaged → nurturing → closing).
+- [x] Update client stats after meeting processing.
+
+### Phase 12: Trial Constraints & Feature Flags (Monetization) ✓
+- [x] Add trial fields to OrganizationSettings schema.
+  - `trial_expires_at`, `max_meetings`, `meetings_count`
+  - `feature_bundle`, `bundle_features` for subscription tiers
+  - `stripe_customer_id`, `stripe_subscription_id` for billing
+- [x] Create Usage Guard service (`app/core/usage_guard.py`).
+  - Quota checking (meetings, minutes)
+  - Trial expiration validation
+  - Feature bundle verification
+  - 402 Payment Required response for exceeded quotas
+- [x] Create Billing API (`app/api/v1/billing.py`).
+  - Usage status endpoint
+  - Feature access check
+  - Bundle information
+  - Upgrade/extend trial endpoints (placeholder for Stripe)
+- [x] Update ingestion pipeline with quota checks.
+  - Block processing if quota exceeded
+  - Simulated calls exempt from quota
+- [x] Create UsageTracker component (`components/shared/UsageTracker.tsx`).
+  - Sidebar compact mode
+  - Full usage dashboard mode
+  - Visual quota bars and trial countdown
+- [x] Create FeatureGate component (`components/shared/FeatureGate.tsx`).
+  - Conditional rendering based on bundle
+  - Locked button variant
+  - `useFeatureAccess` hook
+- [x] Create Progress UI component.
+- [x] Add TypeScript types for billing/usage.
+
+### Phase 13: RBAC, Manager Analytics & UX Refinement ✓
+- [x] Update User model with role fields.
+  - `role` (sales_rep, manager, admin)
+  - `permissions` JSON array for custom access
+  - `team_id`, `reports_to` for hierarchy
+- [x] Create RBAC service (`app/core/rbac.py`).
+  - Role enum with hierarchical permissions
+  - Permission enum for granular access
+  - `UserContext` dataclass
+  - `require_permission`, `require_role` decorators
+- [x] Create Users API (`app/api/v1/users.py`).
+  - Current user context endpoint
+  - Role management
+  - Team members list
+  - Team stats for managers
+- [x] Create Manager Analytics API (`app/api/v1/manager_analytics.py`).
+  - Pipeline value aggregation
+  - Win rate & conversion metrics
+  - Sales cycle length
+  - Activity heatmap
+- [x] Create Sales Excellence Dashboard (`/dashboard/excellence`).
+  - Pipeline value KPI cards
+  - Conversion funnel visualization
+  - Deal heat distribution
+  - Top performers leaderboard
+  - Activity patterns
+- [x] Create Auth Context & Hooks (`lib/auth-context.tsx`).
+  - `AuthProvider` context
+  - `useAuth`, `useRequireRole`, `useRequirePermission` hooks
+- [x] Create RequireRole component.
+  - Conditional rendering based on role
+  - RequirePermission component
+  - RoleBadge display
+- [x] Create Action Center component.
+  - Task Card layout with copy/email actions
+  - Magic Buttons for WhatsApp, Email, Calendar, CRM
+  - Pre-filled AI-generated content
+  - Sync badges for CRM status
+- [x] Apply modern SaaS theme (`globals.css`).
+  - Premium gradient colors
+  - Inter/Heebo font stack
+  - RTL support with auto-flip
+  - Custom animations
+  - Glass morphism effects
+- [x] Add TypeScript types for RBAC, users, analytics.
+
 ---
 
 ## 🔜 Next: Beta Phase (Production Requirements)
@@ -80,6 +196,11 @@
 - [ ] Implement actual CRM API integration (HubSpot/Priority).
 - [ ] Add OAuth2 flow for CRM authentication.
 - [ ] Create CRM sync audit logging.
+- [ ] Two-way sync: Pull existing contacts from CRM → Client model.
+- [ ] Push meeting summaries/notes to CRM contact timeline.
+- [ ] Deal stage synchronization with relationship_stage.
+- [ ] External CRM ID mapping in Client model.
+- [ ] Webhook receivers for CRM updates.
 
 ### Performance & Scalability
 - [ ] Add background job queue (Celery + Redis) for AI processing.

@@ -173,6 +173,22 @@ async def root():
 
 # Import API routes
 from app.api.v1.meetings import router as meetings_router
+from app.api.v1.analytics import router as analytics_router
+from app.api.v1.ingest import router as ingest_router
+from app.api.v1.settings import router as settings_router
+from app.api.v1.feedback import router as feedback_router
+from app.api.v1.clients import router as clients_router
+from app.api.v1.billing import router as billing_router
+from app.api.v1.users import router as users_router
+from app.api.v1.manager_analytics import router as manager_analytics_router
 
 # Include routers
 app.include_router(meetings_router, prefix="/api/v1")
+app.include_router(analytics_router, prefix="/api/v1")
+app.include_router(ingest_router, prefix="/api/v1", tags=["Ingestion"])
+app.include_router(settings_router, prefix="/api/v1", tags=["Settings"])
+app.include_router(feedback_router, prefix="/api/v1", tags=["Feedback"])
+app.include_router(clients_router, prefix="/api/v1", tags=["Clients"])
+app.include_router(billing_router, prefix="/api/v1", tags=["Billing"])
+app.include_router(users_router, prefix="/api/v1", tags=["Users"])
+app.include_router(manager_analytics_router, prefix="/api/v1", tags=["Manager Analytics"])

@@ -342,6 +342,38 @@ def _build_fallback_summary(
     return TachlesSummary(**summary_dict)
 
 
+async def get_organization_settings(org_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch organization settings including custom prompt instructions.
+    
+    Args:
+        org_id: Organization UUID.
+        
+    Returns:
+        Dict with settings or None if not found.
+    """
+    try:
+        from app.core.database import get_prisma
+        prisma = get_prisma()
+        
+        settings_record = await prisma.organizationsettings.find_unique(
+            where={"org_id": org_id}
+        )
+        
+        if settings_record:
+            return {
+                "custom_prompt_instructions": settings_record.custom_prompt_instructions,
+                "enabled_modules": settings_record.enabled_modules,
+                "industry_type": settings_record.industry_type,
+                "default_language": settings_record.default_language,
+                "auto_dispatch_actions": settings_record.auto_dispatch_actions,
+            }
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to fetch org settings for {org_id}: {e}")
+        return None
+
+
 async def generate_summary(
     transcript: str,
     meeting_id: str,
@@ -350,6 +382,8 @@ async def generate_summary(
     client_id: Optional[str] = None,
     duration: Optional[int] = None,
     language_mix: str = "he-IL/en-US",
+    custom_instructions: Optional[str] = None,
+    historical_context: Optional[str] = None,
 ) -> TachlesSummary:
     """
     Generate Tachles-style summary from transcript using Gemini 1.5 Flash.
@@ -362,6 +396,8 @@ async def generate_summary(
         client_id: Optional client/contact UUID.
         duration: Optional meeting duration in seconds.
         language_mix: Language mix string (e.g., "he-IL/en-US").
+        custom_instructions: Optional custom prompt instructions from org settings.
+        historical_context: Optional block of client history from previous meetings.
 
     Returns:
         TachlesSummary Pydantic model with structured summary data.
@@ -370,6 +406,18 @@ async def generate_summary(
 
     try:
         logger.info("Generating summary (Gemini) for meeting: %s", meeting_id)
+
+        # Fetch organization-specific settings if custom_instructions not provided
+        org_custom_prompt = custom_instructions
+        if not org_custom_prompt:
+            org_settings = await get_organization_settings(org_id)
+            if org_settings and org_settings.get("custom_prompt_instructions"):
+                org_custom_prompt = org_settings["custom_prompt_instructions"]
+                logger.info(
+                    "Using custom prompt instructions for org %s: %s...",
+                    org_id,
+                    org_custom_prompt[:100] if len(org_custom_prompt) > 100 else org_custom_prompt
+                )
 
         # If the conversation is extremely short, skip expensive AI call and
         # return a deterministic minimal summary instead of failing.
@@ -391,12 +439,47 @@ async def generate_summary(
                 reason="תמליל קצר מאוד (Hello/Bye או דומה)",
             )
 
+        # Build custom instructions block if organization has specific requirements
+        custom_instructions_block = ""
+        if org_custom_prompt:
+            custom_instructions_block = f"""
+=== ORGANIZATION-SPECIFIC INSTRUCTIONS ===
+The following are custom analysis requirements from this organization. 
+Apply these instructions IN ADDITION to the standard analysis:
+
+{org_custom_prompt}
+
+=== END ORGANIZATION-SPECIFIC INSTRUCTIONS ===
+
+"""
+
+        # Build historical context block for relationship continuity
+        historical_context_block = ""
+        if historical_context:
+            historical_context_block = f"""
+{historical_context}
+
+HISTORICAL CONTEXT USAGE INSTRUCTIONS:
+- Use client history to identify follow-up items from previous meetings
+- Note any changes in sentiment compared to previous conversations
+- Identify if previously discussed objections have been addressed
+- Reference relationship stage when assessing deal heat
+- Do NOT hallucinate information - only reference what's in the history block
+
+"""
+            logger.info(
+                "Injecting historical context for client (%d chars)",
+                len(historical_context)
+            )
+
         # Combine business-focused sales prompt (Hebrew) + Tachles data contract prompt
         # into a single Gemini instruction block. Gemini does not have system/user roles,
         # so we embed both prompts followed by the concrete task and transcript.
         user_prompt = (
             f"{SALES_INSIGHTS_PROMPT_HE}\n\n"
             f"{TACHLES_SYSTEM_PROMPT_V2}\n\n"
+            f"{custom_instructions_block}"
+            f"{historical_context_block}"
             "עכשיו נתח את תמליל שיחת המכירה הבאה והפק סיכום בהתאם להנחיות והמבנה לעיל.\n\n"
             "חשוב מאוד - הנחיות פורמט JSON:\n"
             "- החזר רק אובייקט JSON תקין (valid JSON object) ללא כל טקסט נוסף.\n"
