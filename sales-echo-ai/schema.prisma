@@ -1,0 +1,227 @@
+// SalesEcho AI - Prisma Schema
+// Multi-tenant database schema with Hebrew/English support
+// All core tables include org_id for strict data isolation
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// CORE ENTITIES
+// ============================================
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(255)
+  slug      String?  @unique @db.VarChar(255) // URL-friendly identifier (optional)
+  settings  Json?    // Org-specific config: data_residency, token_caps, feature_flags, etc.
+  usage_minutes Float  @default(0.0) @db.DoublePrecision // Total audio minutes processed (for billing)
+  subscription_plan String @default("FREE") @db.VarChar(50) // FREE, PRO, ENTERPRISE
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  users            User[]
+  meetings         Meeting[]
+  corrections      Correction[]
+  crm_integrations CRMIntegration[]
+  crm_audit_logs   CRMAuditLog[]
+  
+  @@index([slug]) // Fast lookup by slug (in addition to unique constraint)
+  @@map("organizations")
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @db.Uuid
+  auth0_id  String?  @unique @db.VarChar(255) // Auth0 user ID
+  clerk_id  String?  @unique @db.VarChar(255) // Clerk user ID (alternative)
+  email     String   @db.VarChar(255)
+  name      String   @db.VarChar(255)
+  role      String   @default("sales_rep") @db.VarChar(50) // sales_rep, admin, manager
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  meetings     Meeting[]
+  corrections  Correction[]
+  crm_audit_logs CRMAuditLog[]
+  
+  @@index([org_id])
+  @@index([auth0_id])
+  @@index([clerk_id])
+  @@map("users")
+}
+
+model Meeting {
+  id          String   @id @default(uuid()) @db.Uuid
+  org_id      String   @db.Uuid
+  user_id     String   @db.Uuid // Sales rep who conducted the meeting
+  client_name String?  @db.VarChar(255) // Client/contact name
+  client_id   String?  @db.Uuid // Optional: link to CRM contact ID
+  
+  // Audio & Transcript
+  audio_url       String?  @db.Text // S3 or storage URL
+  transcript      String?  @db.Text // Full transcript (UTF-8 for Hebrew/English)
+  transcript_raw  Json?    // Raw STT output with timestamps, speaker diarization
+  
+  // Audio Deletion Tracking (Zero Retention Policy)
+  audio_deleted_at           DateTime? @db.Timestamptz(6)
+  audio_deletion_scheduled_at DateTime? @db.Timestamptz(6)
+  retention_policy_hours     Int?      @db.Integer // Default 24, but configurable per org
+  
+  // AI-Generated Summary (Tachles format - structured JSON)
+  summary         Json?    // Structured summary with meta, content, governance
+  summary_text    String?  @db.Text // Human-readable summary text (Hebrew/English)
+  
+  // Processing Errors
+  processing_errors Json?   // Array of errors during STT/LLM processing
+  
+  // Status & Metadata
+  status          String   @default("PENDING") @db.VarChar(50) // PENDING, PROCESSING, COMPLETED, FAILED, reviewed, synced
+  language_mix    String?  @db.VarChar(20) // e.g., "he-IL/en-US"
+  duration_seconds Int?    @db.Integer
+  confidence_score Float?  @db.DoublePrecision
+  
+  // Review & Sync (Human-in-the-Loop)
+  reviewed_at     DateTime? @db.Timestamptz(6)
+  reviewed_by     String?   @db.Uuid
+  approved_for_sync Boolean @default(false) // Explicit approval flag - required before CRM sync
+  synced_to_crm   Boolean   @default(false)
+  synced_at       DateTime? @db.Timestamptz(6)
+  sync_status     String?   @db.VarChar(50) // "pending", "success", "failed", "retrying"
+  
+  // CRM Sync Retry Mechanism
+  sync_retry_count     Int      @default(0) @db.Integer
+  sync_error_message   String?  @db.Text
+  sync_scheduled_at    DateTime? @db.Timestamptz(6)
+  
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  corrections  Correction[]
+  crm_audit_logs CRMAuditLog[]
+  
+  @@index([org_id])
+  @@index([user_id])
+  @@index([status])
+  @@index([created_at])
+  @@index([org_id, client_id, created_at]) // For context retention: "last 3 meetings with client"
+  @@map("meetings")
+}
+
+// ============================================
+// FEEDBACK LOOP (Module 5)
+// ============================================
+
+model Correction {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @db.Uuid
+  user_id   String   @db.Uuid // User who made the correction
+  meeting_id String  @db.Uuid
+  
+  // What was corrected
+  field_name String  @db.VarChar(100) // e.g., "deal_value", "action_item", "summary_text"
+  old_value  Json?   // Original AI-generated value
+  new_value  Json?   // User-corrected value
+  field_path String? @db.VarChar(255) // JSON path for nested fields
+  
+  // Context
+  source_snippet String? @db.Text // Relevant transcript snippet
+  confidence_before Float? @db.DoublePrecision // AI confidence before correction
+  reason          String? @db.Text // Optional: why the correction was made
+  
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  meeting      Meeting      @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  
+  @@index([org_id])
+  @@index([meeting_id])
+  @@index([field_name])
+  @@map("corrections")
+}
+
+// ============================================
+// CRM INTEGRATIONS (Module 4)
+// ============================================
+
+model CRMIntegration {
+  id        String   @id @default(uuid()) @db.Uuid
+  org_id    String   @db.Uuid
+  
+  // CRM Provider (e.g., "HUBSPOT", "SALESFORCE")
+  provider  String   @db.VarChar(50) // "hubspot", "salesforce", "HUBSPOT", "SALESFORCE"
+  status    String   @default("active") @db.VarChar(50) // active, inactive, error
+  
+  // OAuth2 Tokens (SENSITIVE - encrypted in production via Supabase Vault or AWS KMS)
+  // These tokens are stored in crm_integrations table which is locked to service_role only (RLS)
+  access_token  String?  @db.Text // OAuth2 access token (encrypted at rest)
+  refresh_token String?  @db.Text // OAuth2 refresh token (encrypted at rest)
+  expires_at    DateTime? @db.Timestamptz(6) // Token expiration timestamp (OAuth2 standard)
+  
+  // Configuration
+  config        Json?    // Provider-specific settings
+  webhook_url   String?  @db.Text
+  last_sync_at  DateTime? @db.Timestamptz(6)
+  
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  
+  @@unique([org_id, provider])
+  @@index([org_id])
+  @@index([status])
+  @@map("crm_integrations")
+}
+
+// ============================================
+// CRM AUDIT TRAIL (Immutable Logging)
+// ============================================
+
+model CRMAuditLog {
+  id                  String   @id @default(uuid()) @db.Uuid
+  org_id              String   @db.Uuid
+  meeting_id          String   @db.Uuid
+  created_by          String   @db.Uuid // User who triggered the sync
+  
+  crm_provider        String   @db.VarChar(50) // "hubspot", "salesforce"
+  operation_type      String   @db.VarChar(50) // "create_note", "update_deal", "create_contact", etc.
+  crm_entity_id       String?  @db.VarChar(255) // ID in CRM system
+  crm_entity_type     String   @db.VarChar(50) // "note", "deal", "contact", "timeline_event"
+  
+  payload             Json?    // What was sent to CRM
+  response            Json?    // Response from CRM
+  
+  status              String   @db.VarChar(20) // "success", "failed", "pending"
+  error_message       String?  @db.Text
+  
+  transcript_source   String?  @db.Text // Link/reference to transcript for explainability
+  
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  
+  // Relations
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+  meeting      Meeting      @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [created_by], references: [id], onDelete: SetNull)
+  
+  @@index([org_id])
+  @@index([meeting_id])
+  @@index([crm_provider])
+  @@index([status])
+  @@index([created_at])
+  @@map("crm_audit_logs")
+}

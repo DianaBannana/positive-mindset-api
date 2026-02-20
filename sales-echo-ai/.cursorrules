@@ -1,0 +1,71 @@
+# SalesEcho AI - Cursor Rules
+# Guidelines for AI-assisted development in this project
+
+## Documentation Integrity
+After every significant change to the logic, API endpoints, or database schema, you MUST update the project documentation (e.g., README.md or a dedicated /docs folder). For every AI Pipeline update, document the prompt version and any changes to the data contract.
+
+## Architecture Principles
+- **Multi-tenancy First**: All database queries MUST filter by `org_id` for data isolation
+- **Async-First**: Use `async def` for all I/O operations (database, API calls)
+- **Type Safety**: Use Pydantic models for all data validation
+- **UTF-8 Support**: All text handling must support Hebrew/English (UTF-8 encoding)
+
+## Code Style
+- Follow PEP 8 for Python code
+- Use type hints for all function parameters and return values
+- Document all public functions with docstrings
+- Use descriptive variable names (Hebrew/English context-aware)
+
+## Database Guidelines
+- Always use Prisma client for database operations
+- Use `Prisma.Json` wrapper for JSON fields when updating
+- Never hardcode SQL queries - use Prisma ORM
+- All tables must include `org_id` for multi-tenancy
+
+## AI Pipeline Rules
+- Document system prompt version (e.g., TACHLES_SYSTEM_PROMPT_V2)
+- All confidence scores must be 0.0-1.0
+- All extracted items must include source quotes
+- Set `requires_review: true` if confidence < 0.7
+- Handle Heblish (Hebrew-English code-switching)
+
+## Error Handling
+- Log all errors to `processing_errors` JSON field in database
+- Use structured logging with appropriate log levels
+- Never expose internal errors to API responses (use generic messages)
+- Always clean up temporary files, even on error
+
+## API Design
+- Use FastAPI response models (Pydantic)
+- Include proper HTTP status codes
+- Document all endpoints in docstrings
+- Support Hebrew text in request/response bodies
+
+## Testing Considerations
+- Test multi-tenancy isolation (verify org_id filtering)
+- Test Hebrew/English text encoding
+- Test error scenarios (API failures, invalid data)
+- Test confidence score thresholds
+
+## Security (CRITICAL - Production Standards)
+- **Multi-Tenancy First**: Every database query MUST filter by `org_id`. Never suggest global data fetches.
+- **Never commit API keys or secrets**: Use environment variables for all sensitive data
+- **Validate all user input**: Use Pydantic models for all API inputs
+- **Enforce `approved_for_sync` flag**: Before CRM operations
+- **DEV_ONLY_WARNING**: Flag any code that uses hardcoded credentials, bypasses security filters, or uses development fallbacks. These MUST be removed before production.
+- **Auth Context**: All endpoints must eventually use Auth middleware to extract user context from JWT tokens (not form parameters)
+- **No Cross-Tenant Access**: If code accesses data without org_id filter, it's a SECURITY BUG
+- **Error Message Security**: Never expose internal errors or system details to clients
+
+## File Organization
+- Keep modules in `app/` directory structure
+- API routes in `app/api/v1/`
+- Business logic in `app/services/`
+- Data models in `app/models/`
+- Configuration in `app/core/`
+
+## Git Practices
+- Never commit `.env` files
+- Update documentation with code changes
+- Use descriptive commit messages
+- Document breaking changes in commit messages
